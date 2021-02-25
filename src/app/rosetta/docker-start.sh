@@ -20,6 +20,10 @@ trap cleanup INT
 
 PG_CONN=postgres://$USER:$USER@localhost:5432/archiver
 
+pushd ../../../
+PATH=/usr/local/bin:$PATH dune b src/app/runtime_genesis_ledger/runtime_genesis_ledger.exe src/app/cli/src/coda.exe src/app/archive/archive.exe src/app/rosetta/rosetta.exe src/app/rosetta/test-agent/agent.exe src/app/rosetta/ocaml-signer/signer.exe
+popd
+
 # Start postgres
 pg_ctlcluster 11 main start
 
@@ -39,7 +43,7 @@ PK=${MINA_PK:=ZsMSUuKL9zLAF7sMn951oakTFRCCDw9rDfJgqJ55VMtPXaPa5vPwntQRFJzsHyeh8R
 echo "MINA Flags: $MINA_FLAGS -config-file ${MINA_CONFIG_FILE}"
 
 # archive
-/mina-bin/archive/archive.exe run \
+/_build/default/src/app/archive/archive.exe run \
   -postgres-uri $PG_CONN \
   -config-file ${MINA_CONFIG_FILE} \
   -server-port 3086 &
@@ -48,7 +52,7 @@ echo "MINA Flags: $MINA_FLAGS -config-file ${MINA_CONFIG_FILE}"
 sleep 3
 
 # Daemon w/ mounted config file, initial file is phase 3 config.json
-/mina-bin/cli/src/coda.exe daemon \
+/_build/default/src/app/cli/src/coda.exe daemon \
     -config-file ${MINA_CONFIG_FILE} \
     ${MINA_FLAGS} $@ &
 
@@ -56,7 +60,7 @@ sleep 3
 sleep 3
 
 # rosetta
-/mina-bin/rosetta/rosetta.exe \
+/_build/default/src/app/rosetta/rosetta.exe \
   -archive-uri $PG_CONN \
   -graphql-uri http://localhost:3085/graphql \
   -log-level debug \

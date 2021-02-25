@@ -36,9 +36,15 @@ export CODA_PRIVKEY_PASS=""
 export CODA_LIBP2P_HELPER_PATH=/mina-bin/libp2p_helper
 MINA_CONFIG_DIR=/root/.coda-config
 
+pushd ../../../
+PATH=/usr/local/bin:$PATH dune b src/app/runtime_genesis_ledger/runtime_genesis_ledger.exe src/app/cli/src/coda.exe src/app/archive/archive.exe src/app/rosetta/rosetta.exe src/app/rosetta/test-agent/agent.exe src/app/rosetta/ocaml-signer/signer.exe
+popd
+
+ls /_build
+ls $HOME
 
 # archive
-/mina-bin/archive/archive.exe run \
+/_build/default/src/app/archive/archive.exe run \
   -postgres-uri $PG_CONN \
   -log-json \
   -config-file "$MINA_CONFIG_DIR/daemon.json" \
@@ -48,7 +54,7 @@ MINA_CONFIG_DIR=/root/.coda-config
 sleep 3
 
 # MINA_CONFIG_DIR is exposed by the dockerfile and contains demo mode essentials
-/mina-bin/cli/src/coda.exe daemon \
+/_build/default/src/rli/src/coda.exe daemon \
   -seed \
   -demo-mode \
   -block-producer-key "MINA_CONFIG_DIR/wallets/store/$PK" \
@@ -66,7 +72,7 @@ sleep 3
 sleep 3
 
 # rosetta
-/mina-bin/rosetta/rosetta.exe \
+/_build/default/src/app/rosetta/rosetta.exe \
   -archive-uri $PG_CONN \
   -graphql-uri http://localhost:3085/graphql \
   -log-level debug \
@@ -77,7 +83,7 @@ sleep 3
 sleep 3
 
 # test agent
-/mina-bin/rosetta/test-agent/agent.exe \
+/_build/default/src/app/rosetta/test-agent/agent.exe \
   -graphql-uri http://localhost:3085/graphql \
   -rosetta-uri http://localhost:3087/ \
   -log-level Trace \
