@@ -54,6 +54,14 @@ variable "snark_worker_public_key" {
   type = string
 }
 
+variable "archive_node_count" {
+  type = number
+}
+
+variable "mina_archive_schema" {
+  type = string
+}
+
 variable "block_producer_configs" {
   type = list(
     object({
@@ -62,7 +70,8 @@ variable "block_producer_configs" {
       public_key = string,
       private_key = string,
       keypair_secret = string,
-      libp2p_secret = string
+      libp2p_secret = string,
+      log_precomputed_blocks = bool
     })
   )
 }

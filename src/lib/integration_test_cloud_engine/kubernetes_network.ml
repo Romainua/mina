@@ -22,6 +22,33 @@ module Node = struct
     Format.sprintf "[ %s ]"
       (String.concat ~sep:",  " (List.map nl ~f:node_to_string))
 
+  let run_in_postgresql_container node ~n ~cmd =
+    let base_args = base_kube_args node in
+    let base_kube_cmd = "kubectl " ^ String.concat ~sep:" " base_args in
+    let kubectl_cmd =
+      Printf.sprintf
+        "%s -c archive-node-%d-postgresql exec -i \
+         archive-node-%d-postgresql-0 -- %s"
+        base_kube_cmd n n cmd
+    in
+    let%bind cwd = Unix.getcwd () in
+    Cmd_util.run_cmd_exn cwd "sh" ["-c"; kubectl_cmd]
+
+  let get_logs_in_container container node =
+    let base_args = base_kube_args node in
+    let base_kube_cmd = "kubectl " ^ String.concat ~sep:" " base_args in
+    let pod_cmd =
+      sprintf "%s get pod -l \"app=%s\" -o name" base_kube_cmd node.pod_id
+    in
+    let%bind cwd = Unix.getcwd () in
+    let%bind pod = Cmd_util.run_cmd_exn cwd "sh" ["-c"; pod_cmd] in
+    let kubectl_cmd =
+      Printf.sprintf "%s logs -c %s -n %s %s" base_kube_cmd container
+        node.namespace pod
+    in
+    Format.eprintf "CMD: %s@." kubectl_cmd ;
+    Cmd_util.run_cmd_exn cwd "sh" ["-c"; kubectl_cmd]
+
   let run_in_container node cmd =
     let base_args = base_kube_args node in
     let base_kube_cmd = "kubectl " ^ String.concat ~sep:" " base_args in
@@ -30,23 +57,91 @@ module Node = struct
         "%s -c coda exec -i $( %s get pod -l \"app=%s\" -o name) -- %s"
         base_kube_cmd base_kube_cmd node.pod_id cmd
     in
-    let%bind cwd = Unix.getcwd () in
-    let%map _ = Cmd_util.run_cmd_exn cwd "sh" ["-c"; kubectl_cmd] in
-    ()
+    let%bind.Deferred.Let_syntax cwd = Unix.getcwd () in
+    Malleable_error.return (Cmd_util.run_cmd_exn cwd "sh" ["-c"; kubectl_cmd])
 
   let start ~fresh_state node : unit Malleable_error.t =
     let open Malleable_error.Let_syntax in
     let%bind () =
       if fresh_state then
-        Deferred.bind ~f:Malleable_error.return
-          (run_in_container node "rm -rf .mina-config")
+        let%bind _ = run_in_container node "rm -rf .mina-config" in
+        Malleable_error.return ()
       else Malleable_error.return ()
     in
-    Deferred.bind ~f:Malleable_error.return
-      (run_in_container node "./start.sh")
+    let%bind _ = run_in_container node "./start.sh" in
+    Malleable_error.return ()
 
   let stop node =
-    Deferred.bind ~f:Malleable_error.return (run_in_container node "./stop.sh")
+    let open Malleable_error.Let_syntax in
+    let%bind _ = run_in_container node "./stop.sh" in
+    Malleable_error.return ()
+
+  let get_pod_name t : string Malleable_error.t =
+    let args =
+      List.append (base_kube_args t)
+        [ "get"
+        ; "pod"
+        ; "-l"
+        ; sprintf "app=%s" t.pod_id
+        ; "-o=custom-columns=NAME:.metadata.name"
+        ; "--no-headers" ]
+    in
+    List.iter args ~f:(Format.eprintf "%s ") ;
+    Format.eprintf "@." ;
+    let%bind run_result =
+      Deferred.bind ~f:Malleable_error.of_or_error_hard
+        (Process.run_lines ~prog:"kubectl" ~args ())
+    in
+    match run_result with
+    | Ok
+        { Malleable_error.Accumulator.computation_result= [pod_name]
+        ; soft_errors= _ } ->
+        Malleable_error.return pod_name
+    | Ok {Malleable_error.Accumulator.computation_result= []; soft_errors= _}
+      ->
+        Malleable_error.of_string_hard_error "get_pod_name: no result"
+    | Ok _ ->
+        Malleable_error.of_string_hard_error "get_pod_name: too many results"
+    | Error
+        { Malleable_error.Hard_fail.hard_error= e
+        ; Malleable_error.Hard_fail.soft_errors= _ } ->
+        Malleable_error.of_error_hard e.error
+
+  let set_port_forwarding ~logger t ~remote_port ~local_port =
+    let open Malleable_error.Let_syntax in
+    let%bind name = get_pod_name t in
+    let portmap = sprintf "%d:%d" remote_port local_port in
+    let args =
+      List.append (base_kube_args t) ["port-forward"; name; portmap]
+    in
+    [%log debug] "Port forwarding using \"kubectl %s\"\n"
+      String.(concat args ~sep:" ") ;
+    let%bind proc =
+      Deferred.bind ~f:Malleable_error.of_or_error_hard
+        (Process.create ~prog:"kubectl" ~args ())
+    in
+    Exit_handlers.register_handler ~logger
+      ~description:
+        (sprintf "Kubectl port forwarder on pod %s, port %d" t.pod_id
+           local_port) (fun () ->
+        [%log debug]
+          "Port forwarding being killed, no longer occupying port %d "
+          local_port ;
+        ignore Signal.(send kill (`Pid (Process.pid proc))) ) ;
+    Deferred.bind ~f:Malleable_error.of_or_error_hard
+      (Process.collect_stdout_and_wait proc)
+
+  let set_port_forwarding_exn ~logger t ~remote_port ~local_port =
+    match%map.Deferred.Let_syntax
+      set_port_forwarding ~logger t ~remote_port ~local_port
+    with
+    | Ok _ ->
+        (* not reachable, port forwarder does not terminate *)
+        ()
+    | Error {Malleable_error.Hard_fail.hard_error= err; soft_errors= _} ->
+        [%log fatal] "Error running k8s port forwarding"
+          ~metadata:[("error", Error_json.error_to_yojson err.error)] ;
+        failwith "Could not run k8s port forwarding"
 
   module Decoders = Graphql_lib.Decoders
 
@@ -57,59 +152,9 @@ module Node = struct
         ~host:Unix.Inet_addr.(localhost |> to_string)
         ~port ~path:"graphql" ()
 
-    let get_pod_name t : string Malleable_error.t =
-      let args =
-        List.append (base_kube_args t)
-          [ "get"
-          ; "pod"
-          ; "-l"
-          ; sprintf "app=%s" t.pod_id
-          ; "-o=custom-columns=NAME:.metadata.name"
-          ; "--no-headers" ]
-      in
-      let%bind run_result =
-        Deferred.bind ~f:Malleable_error.of_or_error_hard
-          (Process.run_lines ~prog:"kubectl" ~args ())
-      in
-      match run_result with
-      | Ok
-          { Malleable_error.Accumulator.computation_result= [pod_name]
-          ; soft_errors= _ } ->
-          Malleable_error.return pod_name
-      | Ok {Malleable_error.Accumulator.computation_result= []; soft_errors= _}
-        ->
-          Malleable_error.of_string_hard_error "get_pod_name: no result"
-      | Ok _ ->
-          Malleable_error.of_string_hard_error "get_pod_name: too many results"
-      | Error
-          { Malleable_error.Hard_fail.hard_error= e
-          ; Malleable_error.Hard_fail.soft_errors= _ } ->
-          Malleable_error.of_error_hard e.error
-
-    (* default GraphQL port is 3085, may need to be explicit if multiple daemons are running *)
-    let set_port_forwarding ~logger t =
-      let open Malleable_error.Let_syntax in
-      let%bind name = get_pod_name t in
-      let port = t.node_graphql_port in
-      let portmap = string_of_int port ^ ":3085" in
-      let args =
-        List.append (base_kube_args t) ["port-forward"; name; portmap]
-      in
-      [%log debug] "Port forwarding using \"kubectl %s\"\n"
-        String.(concat args ~sep:" ") ;
-      let%bind proc =
-        Deferred.bind ~f:Malleable_error.of_or_error_hard
-          (Process.create ~prog:"kubectl" ~args ())
-      in
-      Exit_handlers.register_handler ~logger
-        ~description:
-          (sprintf "Kubectl port forwarder on pod %s, port %d" t.pod_id port)
-        (fun () ->
-          [%log debug]
-            "Port forwarding being killed, no longer occupying port %d " port ;
-          ignore Signal.(send kill (`Pid (Process.pid proc))) ) ;
-      Deferred.bind ~f:Malleable_error.of_or_error_hard
-        (Process.collect_stdout_and_wait proc)
+    let set_port_forwarding_exn ~logger t =
+      set_port_forwarding_exn ~logger t ~remote_port:t.node_graphql_port
+        ~local_port:t.node_graphql_port
 
     module Client = Graphql_lib.Client.Make (struct
       let preprocess_variables_string = Fn.id
@@ -175,15 +220,12 @@ module Node = struct
     |}]
   end
 
-  let set_port_forwarding_exn ~logger t =
-    match%map.Deferred.Let_syntax Graphql.set_port_forwarding ~logger t with
-    | Ok _ ->
-        (* not reachable, port forwarder does not terminate *)
-        ()
-    | Error {Malleable_error.Hard_fail.hard_error= err; soft_errors= _} ->
-        [%log fatal] "Error running k8s port forwarding"
-          ~metadata:[("error", Error_json.error_to_yojson err.error)] ;
-        failwith "Could not run k8s port forwarding"
+  module Postgresql = struct
+    let port = 5432
+
+    let set_port_forwarding_exn ~logger t =
+      set_port_forwarding_exn ~logger t ~remote_port:port ~local_port:port
+  end
 
   (* this function will repeatedly attempt to connect to graphql port <num_tries> times before giving up *)
   let exec_graphql_request ?(num_tries = 10) ?(retry_delay_sec = 30.0)
@@ -250,8 +292,7 @@ module Node = struct
     [%log info] "Getting node's peer_id, and the peer_ids of node's peers"
       ~metadata:
         [("namespace", `String t.namespace); ("pod_id", `String t.pod_id)] ;
-    (* let graphql_port = 3085 in *)
-    Deferred.don't_wait_for (set_port_forwarding_exn ~logger t) ;
+    Deferred.don't_wait_for (Graphql.set_port_forwarding_exn ~logger t) ;
     let query_obj = Graphql.Query_peer_id.make () in
     let%bind query_result_obj =
       exec_graphql_request ~logger ~graphql_port:t.node_graphql_port
@@ -280,8 +321,7 @@ module Node = struct
         [ ("namespace", `String t.namespace)
         ; ("pod_id", `String t.pod_id)
         ; ("account_id", Mina_base.Account_id.to_yojson account_id) ] ;
-    (* let graphql_port = 3085 in *)
-    Deferred.don't_wait_for (set_port_forwarding_exn ~logger t) ;
+    Deferred.don't_wait_for (Graphql.set_port_forwarding_exn ~logger t) ;
     let pk = Mina_base.Account_id.public_key account_id in
     let token = Mina_base.Account_id.token_id account_id in
     let get_balance () =
@@ -313,10 +353,9 @@ module Node = struct
     [%log info] "Sending a payment"
       ~metadata:
         [("namespace", `String t.namespace); ("pod_id", `String t.pod_id)] ;
-    Deferred.don't_wait_for (set_port_forwarding_exn ~logger t) ;
+    Deferred.don't_wait_for (Graphql.set_port_forwarding_exn ~logger t) ;
     let open Malleable_error.Let_syntax in
     let sender_pk_str = Signature_lib.Public_key.Compressed.to_string sender in
-    (* let graphql_port = 3085 in *)
     [%log info] "send_payment: unlocking account"
       ~metadata:[("sender_pk", `String sender_pk_str)] ;
     let unlock_sender_account_graphql () =
@@ -349,6 +388,81 @@ module Node = struct
     [%log info] "Sent payment"
       ~metadata:[("user_command_id", `String user_cmd_id)] ;
     ()
+
+  let dump_archive_data ~logger (t : t) ~data_file =
+    let open Malleable_error.Let_syntax in
+    let%map data =
+      Deferred.bind ~f:Malleable_error.return
+        (run_in_postgresql_container t ~n:1
+           ~cmd:
+             "pg_dump --create --no-owner \
+              postgres://postgres:foobar@localhost:5432/archive")
+    in
+    [%log info] "Dumping archive data to file %s" data_file ;
+    Out_channel.with_file data_file ~f:(fun out_ch ->
+        Out_channel.output_string out_ch data )
+
+  let dump_container_logs ~logger (t : t) ~log_file =
+    let open Malleable_error.Let_syntax in
+    let%map logs =
+      Deferred.bind ~f:Malleable_error.return (get_logs_in_container "coda" t)
+    in
+    [%log info] "Dumping container log to file %s" log_file ;
+    Out_channel.with_file log_file ~f:(fun out_ch ->
+        Out_channel.output_string out_ch logs )
+
+  let dump_precomputed_blocks ~logger (t : t) =
+    let open Malleable_error.Let_syntax in
+    [%log info] "Dumping precomputed blocks from logs for node %s" t.pod_id ;
+    let%map logs =
+      Deferred.bind ~f:Malleable_error.return (get_logs_in_container "coda" t)
+    in
+    let log_lines = String.split logs ~on:'\n' in
+    let jsons = List.map log_lines ~f:Yojson.Safe.from_string in
+    let metadata_jsons =
+      List.map jsons ~f:(fun json ->
+          match json with
+          | `Assoc items -> (
+            match List.Assoc.find items ~equal:String.equal "metadata" with
+            | Some md ->
+                md
+            | None ->
+                failwithf "Log line is missing metadata: %s"
+                  (Yojson.Safe.to_string json)
+                  () )
+          | other ->
+              failwithf "Expected log line to be a JSON record, got: %s"
+                (Yojson.Safe.to_string other)
+                () )
+    in
+    let state_hash_and_blocks =
+      List.fold metadata_jsons ~init:[] ~f:(fun acc json ->
+          match json with
+          | `Assoc items -> (
+            match
+              List.Assoc.find items ~equal:String.equal "precomputed_block"
+            with
+            | Some block -> (
+              match List.Assoc.find items ~equal:String.equal "state_hash" with
+              | Some hash ->
+                  (hash, block) :: acc
+              | None ->
+                  failwith
+                    "Log metadata contains a precomputed block, but no state \
+                     hash" )
+            | None ->
+                acc )
+          | other ->
+              failwithf "Expected log line to be a JSON record, got: %s"
+                (Yojson.Safe.to_string other)
+                () )
+    in
+    List.iter state_hash_and_blocks ~f:(fun (state_hash_json, block_json) ->
+        let state_hash = Yojson.Safe.to_string state_hash_json in
+        let block = Yojson.Safe.to_string block_json in
+        [%log info] "Dumping precomputed block with state hash %s" state_hash ;
+        Out_channel.with_file (state_hash ^ ".json") ~f:(fun out_ch ->
+            Out_channel.output_string out_ch block ) )
 end
 
 type t =

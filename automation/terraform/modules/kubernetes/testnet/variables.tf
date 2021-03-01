@@ -41,6 +41,11 @@ variable "mina_archive_schema" {
   default = ""
 }
 
+variable "archive_node_count" {
+  type    = number
+  default = 0
+}
+
 variable "coda_agent_image" {
   type    = string
   default = "codaprotocol/coda-user-agent:0.1.4"

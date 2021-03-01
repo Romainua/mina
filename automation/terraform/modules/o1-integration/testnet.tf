@@ -38,6 +38,9 @@ module "kubernetes_testnet" {
     }
   ]
 
+  archive_node_count   = var.archive_node_count
+  mina_archive_schema  = var.mina_archive_schema
+
   snark_worker_replicas   = var.snark_worker_replicas
   snark_worker_fee        = var.snark_worker_fee
   snark_worker_public_key = var.snark_worker_public_key
@@ -52,6 +55,7 @@ module "kubernetes_testnet" {
       external_port          = local.block_producer_starting_host_port + index
       private_key_secret     = config.keypair_secret
       libp2p_secret          = config.libp2p_secret
+      log_precomputed_blocks = config.log_precomputed_blocks
       isolated               = false
       enable_gossip_flooding = false
       run_with_user_agent    = false

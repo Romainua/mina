@@ -1,5 +1,10 @@
 module Container_images = struct
-  type t = {coda: string; user_agent: string; bots: string; points: string}
+  type t =
+    { coda: string
+    ; archive_node: string
+    ; user_agent: string
+    ; bots: string
+    ; points: string }
 end
 
 module Block_producer = struct
@@ -20,6 +25,7 @@ type t =
   ; txpool_max_size: int
   ; block_producers: Block_producer.t list
   ; num_snark_workers: int
+  ; num_archive_nodes: int
   ; snark_worker_fee: string
   ; snark_worker_public_key: string }
 
@@ -30,8 +36,9 @@ let default =
   ; delta= 0
   ; proof_level= Full
   ; txpool_max_size= 3000
-  ; num_snark_workers= 2
   ; block_producers= []
+  ; num_snark_workers= 2
+  ; num_archive_nodes= 0
   ; snark_worker_fee= "0.025"
   ; snark_worker_public_key=
       (let pk, _ = (Lazy.force Mina_base.Sample_keypairs.keypairs).(0) in
