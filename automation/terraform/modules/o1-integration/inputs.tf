@@ -54,6 +54,10 @@ variable "snark_worker_public_key" {
   type = string
 }
 
+variable "log_precomputed_blocks" {
+  type = bool
+}
+
 variable "archive_node_count" {
   type = number
 }
@@ -70,8 +74,7 @@ variable "block_producer_configs" {
       public_key = string,
       private_key = string,
       keypair_secret = string,
-      libp2p_secret = string,
-      log_precomputed_blocks = bool
+      libp2p_secret = string
     })
   )
 }

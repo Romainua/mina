@@ -52,8 +52,7 @@ module Network_config = struct
     ; public_key: string
     ; private_key: string
     ; keypair_secret: string
-    ; libp2p_secret: string
-    ; log_precomputed_blocks: bool }
+    ; libp2p_secret: string }
   [@@deriving to_yojson]
 
   type terraform_config =
@@ -70,6 +69,7 @@ module Network_config = struct
     ; runtime_config: Yojson.Safe.t
           [@to_yojson fun j -> `String (Yojson.Safe.to_string j)]
     ; block_producer_configs: block_producer_config list
+    ; log_precomputed_blocks: bool
     ; archive_node_count: int
     ; mina_archive_schema: string
     ; snark_worker_replicas: int
@@ -102,6 +102,7 @@ module Network_config = struct
         ; block_producers
         ; num_snark_workers
         ; num_archive_nodes
+        ; log_precomputed_blocks
         ; snark_worker_fee
         ; snark_worker_public_key } =
       test_config
@@ -227,8 +228,7 @@ module Network_config = struct
       ; keypair_secret= keypair.secret_name
       ; public_key= keypair.public_key_file
       ; private_key= keypair.private_key_file
-      ; libp2p_secret= ""
-      ; log_precomputed_blocks= true }
+      ; libp2p_secret= "" }
     in
     let mina_archive_schema =
       "https://raw.githubusercontent.com/MinaProtocol/mina/develop/src/app/archive/create_schema.sql"
@@ -250,6 +250,7 @@ module Network_config = struct
         ; runtime_config= Runtime_config.to_yojson runtime_config
         ; block_producer_configs=
             List.mapi block_producer_keypairs ~f:block_producer_config
+        ; log_precomputed_blocks
         ; archive_node_count= num_archive_nodes
         ; mina_archive_schema
         ; snark_worker_replicas= num_snark_workers

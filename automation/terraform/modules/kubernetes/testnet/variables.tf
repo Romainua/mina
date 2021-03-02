@@ -135,6 +135,11 @@ variable "log_snark_work_gossip" {
   default = false
 }
 
+variable "log_precomputed_blocks" {
+  type    = bool
+  default = false
+}
+
 variable "log_txn_pool_gossip" {
   type    = bool
   default = false

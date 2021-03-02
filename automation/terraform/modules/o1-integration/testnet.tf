@@ -38,6 +38,8 @@ module "kubernetes_testnet" {
     }
   ]
 
+  log_precomputed_blocks = var.log_precomputed_blocks
+
   archive_node_count   = var.archive_node_count
   mina_archive_schema  = var.mina_archive_schema
 
@@ -55,7 +57,6 @@ module "kubernetes_testnet" {
       external_port          = local.block_producer_starting_host_port + index
       private_key_secret     = config.keypair_secret
       libp2p_secret          = config.libp2p_secret
-      log_precomputed_blocks = config.log_precomputed_blocks
       isolated               = false
       enable_gossip_flooding = false
       run_with_user_agent    = false

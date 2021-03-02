@@ -17,6 +17,7 @@ locals {
     seedPeers            = local.peers
     logLevel             = var.log_level
     logSnarkWorkGossip   = var.log_snark_work_gossip
+    logPrecomputedBlocks = var.log_precomputed_blocks
     uploadBlocksToGCloud = var.upload_blocks_to_gcloud
     seedPeersURL         = var.seed_peers_url
   }
@@ -263,4 +264,3 @@ resource "helm_release" "watchdog" {
   timeout    = 600
   depends_on = [helm_release.seeds]
 }
-

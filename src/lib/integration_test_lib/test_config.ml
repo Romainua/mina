@@ -26,6 +26,7 @@ type t =
   ; block_producers: Block_producer.t list
   ; num_snark_workers: int
   ; num_archive_nodes: int
+  ; log_precomputed_blocks: bool
   ; snark_worker_fee: string
   ; snark_worker_public_key: string }
 
@@ -39,6 +40,7 @@ let default =
   ; block_producers= []
   ; num_snark_workers= 2
   ; num_archive_nodes= 0
+  ; log_precomputed_blocks= false
   ; snark_worker_fee= "0.025"
   ; snark_worker_public_key=
       (let pk, _ = (Lazy.force Mina_base.Sample_keypairs.keypairs).(0) in
